@@ -1,0 +1,1 @@
+export default function Login(){return <div className="studio"><div className="card"><div className="title">AudioHub</div><p className="sub">Authentication shell is reserved for production SSO/JWT integration. The self-hosted development profile starts in admin mode.</p><a className="btn" href="/dashboard">Open dashboard</a></div></div>}
