@@ -49,7 +49,11 @@ services:
       - "8080:8080"
 
   web:
-    build: ./apps/web
+    build:
+      context: ./apps/web
+      args:
+        NEXT_PUBLIC_API_URL: http://localhost:8080
+        NEXT_PUBLIC_LIVEKIT_URL: ws://localhost:7880
     environment:
       NEXT_PUBLIC_API_URL: http://localhost:8080
       NEXT_PUBLIC_LIVEKIT_URL: ws://localhost:7880
