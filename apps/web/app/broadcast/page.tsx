@@ -1,6 +1,6 @@
 'use client';
 import { useEffect, useRef, useState } from 'react';
-import { Room, RoomEvent, LocalTrackPublication } from 'livekit-client';
+import { Room, RoomEvent, LocalTrackPublication, Track } from 'livekit-client';
 import { api, Channel } from '@/lib/api';
 
 type AudioSourceType = 'mic' | 'system' | 'file';
@@ -180,7 +180,7 @@ export default function Broadcast() {
       // Publish the active track
       const pub = await room.localParticipant.publishTrack(activeTrack, {
         name: 'audio',
-        source: sourceType === 'mic' ? 'microphone' : 'screen_share_audio',
+        source: sourceType === 'mic' ? Track.Source.Microphone : Track.Source.ScreenShareAudio,
       });
       customTrackPubRef.current = pub;
 
