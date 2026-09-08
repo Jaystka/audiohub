@@ -5,6 +5,15 @@ import { api, Channel } from '@/lib/api';
 
 type AudioSourceType = 'youtube' | 'mic' | 'system' | 'file';
 
+type SearchResult = {
+  id: string;
+  title: string;
+  duration: string;
+  thumbnail: string;
+  uploader: string;
+  url: string;
+};
+
 export default function Broadcast() {
   const [channels, setChannels] = useState<Channel[]>([]);
   const [slug, setSlug] = useState('office');
@@ -16,6 +25,10 @@ export default function Broadcast() {
   const [selectedDeviceId, setSelectedDeviceId] = useState<string>('');
   const [fileName, setFileName] = useState<string>('');
   const [youtubeUrl, setYoutubeUrl] = useState<string>('https://www.youtube.com/watch?v=jfKfPfyJRdk');
+  const [selectedTitle, setSelectedTitle] = useState<string>('Lofi Girl - lofi hip hop radio');
+  const [searchQuery, setSearchQuery] = useState<string>('');
+  const [searchResults, setSearchResults] = useState<SearchResult[]>([]);
+  const [searching, setSearching] = useState<boolean>(false);
   const [statusMessage, setStatusMessage] = useState<string>('');
 
   const roomRef = useRef<Room | null>(null);
@@ -47,6 +60,27 @@ export default function Broadcast() {
       stopBroadcastCleanup();
     };
   }, []);
+
+  async function handleSearch(e?: React.FormEvent) {
+    if (e) e.preventDefault();
+    if (!searchQuery.trim()) return;
+
+    setSearching(true);
+    try {
+      const res = await api<SearchResult[]>(`/api/youtube/search?q=${encodeURIComponent(searchQuery.trim())}`);
+      setSearchResults(res || []);
+    } catch (err) {
+      console.error('Failed to search YouTube:', err);
+      alert('Gagal mencari lagu di YouTube.');
+    } finally {
+      setSearching(false);
+    }
+  }
+
+  function selectTrack(item: SearchResult) {
+    setYoutubeUrl(item.url);
+    setSelectedTitle(item.title);
+  }
 
   function stopBroadcastCleanup() {
     if (raf.current) cancelAnimationFrame(raf.current);
@@ -105,9 +139,8 @@ export default function Broadcast() {
       setStatusMessage('Menghubungkan sumber audio...');
 
       if (sourceType === 'youtube') {
-        // Direct YouTube Audio Stream without screen/tab share popup!
         if (!youtubeUrl.trim()) {
-          alert('Silakan masukkan link YouTube terlebih dahulu.');
+          alert('Silakan pilih atau masukkan link YouTube terlebih dahulu.');
           return;
         }
 
@@ -127,7 +160,7 @@ export default function Broadcast() {
         const dest = ctx.createMediaStreamDestination();
         const src = ctx.createMediaElementSource(audio);
         src.connect(dest);
-        src.connect(ctx.destination); // dengarkan di speaker lokal juga
+        src.connect(ctx.destination);
 
         await audio.play();
         const audioTrack = dest.stream.getAudioTracks()[0];
@@ -269,7 +302,7 @@ export default function Broadcast() {
     <div className="studio">
       <div className="center">
         <div className="title">Broadcast Studio</div>
-        <div className="sub">Direct YouTube audio streaming, music player, and microphone broadcasting.</div>
+        <div className="sub">Cari lagu YouTube langsung, streaming musik, atau gunakan mikrofon ke realtime channel.</div>
       </div>
       <div className="card" style={{ marginTop: 20 }}>
         {/* Channel Selection */}
@@ -292,34 +325,46 @@ export default function Broadcast() {
             onChange={e => setSourceType(e.target.value as AudioSourceType)}
             disabled={live}
           >
-            <option value="youtube">▶️ Direct YouTube Streamer (Tanpa Share Tab - Rendah Latency)</option>
+            <option value="youtube">🔍 Cari & Stream YouTube (Direct - Rendah Latency)</option>
             <option value="file">🎵 Audio File (MP3 / WAV Player)</option>
             <option value="system">💻 Computer / Tab Audio (Manual Screen Share)</option>
             <option value="mic">🎙️ Microphone / Audio Input Device</option>
           </select>
         </div>
 
-        {/* Direct YouTube Section */}
+        {/* YouTube Direct Search Section */}
         {sourceType === 'youtube' && (
           <div style={{ marginTop: 6, marginBottom: 18 }}>
-            <div className="field">
-              <label>YouTube URL</label>
+            {/* Search Box */}
+            <form onSubmit={handleSearch} style={{ display: 'flex', gap: 8, marginBottom: 12 }}>
               <input
                 type="text"
-                placeholder="https://www.youtube.com/watch?v=..."
-                value={youtubeUrl}
-                onChange={e => setYoutubeUrl(e.target.value)}
+                placeholder="🔍 Ketik judul lagu / artis YouTube (misal: Lofi Hip Hop, Tulus, Sheila on 7)..."
+                value={searchQuery}
+                onChange={e => setSearchQuery(e.target.value)}
                 disabled={live}
+                style={{ flex: 1 }}
               />
-            </div>
+              <button
+                type="submit"
+                className="btn"
+                disabled={searching || live}
+                style={{ minWidth: 90 }}
+              >
+                {searching ? 'Mencari...' : 'Cari'}
+              </button>
+            </form>
 
             {/* Quick Presets */}
-            <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', marginTop: 6, marginBottom: 12 }}>
+            <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', marginBottom: 12 }}>
               <button
                 type="button"
                 className="btn"
                 style={{ fontSize: 12, padding: '4px 10px', background: 'rgba(255,255,255,0.08)' }}
-                onClick={() => setYoutubeUrl('https://www.youtube.com/watch?v=jfKfPfyJRdk')}
+                onClick={() => {
+                  setYoutubeUrl('https://www.youtube.com/watch?v=jfKfPfyJRdk');
+                  setSelectedTitle('Lofi Girl - lofi hip hop radio');
+                }}
                 disabled={live}
               >
                 ☕ Lofi Girl Radio
@@ -328,24 +373,89 @@ export default function Broadcast() {
                 type="button"
                 className="btn"
                 style={{ fontSize: 12, padding: '4px 10px', background: 'rgba(255,255,255,0.08)' }}
-                onClick={() => setYoutubeUrl('https://www.youtube.com/watch?v=5qap5aO4i9A')}
+                onClick={() => {
+                  setYoutubeUrl('https://www.youtube.com/watch?v=5qap5aO4i9A');
+                  setSelectedTitle('Lofi Synthwave Chill');
+                }}
                 disabled={live}
               >
-                🎧 Lofi Synthwave
+                🎧 Synthwave Radio
               </button>
               <button
                 type="button"
                 className="btn"
                 style={{ fontSize: 12, padding: '4px 10px', background: 'rgba(255,255,255,0.08)' }}
-                onClick={() => setYoutubeUrl('https://www.youtube.com/watch?v=DWcJFNfaw9c')}
+                onClick={() => {
+                  setYoutubeUrl('https://www.youtube.com/watch?v=DWcJFNfaw9c');
+                  setSelectedTitle('Relaxing Acoustic Guitar');
+                }}
                 disabled={live}
               >
                 🌿 Relaxing Acoustic
               </button>
             </div>
 
-            <div style={{ background: 'rgba(34,197,94,0.1)', border: '1px solid rgba(34,197,94,0.25)', padding: '10px 14px', borderRadius: 8, fontSize: 13, color: '#86efac' }}>
-              ⚡ <strong>Direct Stream:</strong> Cukup masukkan URL YouTube di atas dan klik <strong>Start broadcast</strong>. Audio YouTube akan langsung diproses dan disiarkan dengan latensi sangat rendah tanpa popup share tab!
+            {/* Search Results List */}
+            {searchResults.length > 0 && (
+              <div style={{ maxHeight: 240, overflowY: 'auto', background: 'rgba(0,0,0,0.3)', borderRadius: 8, padding: 8, marginBottom: 12, border: '1px solid rgba(255,255,255,0.08)' }}>
+                <div style={{ fontSize: 12, color: '#aaa', marginBottom: 6, fontWeight: 600 }}>Hasil Pencarian:</div>
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+                  {searchResults.map(item => {
+                    const isSelected = youtubeUrl === item.url;
+                    return (
+                      <div
+                        key={item.id}
+                        onClick={() => !live && selectTrack(item)}
+                        style={{
+                          display: 'flex',
+                          alignItems: 'center',
+                          gap: 10,
+                          padding: '6px 8px',
+                          borderRadius: 6,
+                          background: isSelected ? 'rgba(59,130,246,0.25)' : 'rgba(255,255,255,0.03)',
+                          border: isSelected ? '1px solid rgba(59,130,246,0.5)' : '1px solid transparent',
+                          cursor: live ? 'not-allowed' : 'pointer',
+                          transition: 'background 0.2s',
+                        }}
+                      >
+                        {item.thumbnail ? (
+                          <img src={item.thumbnail} alt={item.title} style={{ width: 54, height: 36, objectFit: 'cover', borderRadius: 4 }} />
+                        ) : (
+                          <div style={{ width: 54, height: 36, background: '#333', borderRadius: 4, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 10 }}>YT</div>
+                        )}
+                        <div style={{ flex: 1, minWidth: 0 }}>
+                          <div style={{ fontSize: 13, fontWeight: 500, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', color: isSelected ? '#93c5fd' : '#fff' }}>
+                            {item.title}
+                          </div>
+                          <div style={{ fontSize: 11, color: '#888' }}>
+                            {item.uploader || 'YouTube'} {item.duration ? `• ${item.duration}` : ''}
+                          </div>
+                        </div>
+                        <button
+                          type="button"
+                          className="btn"
+                          style={{ fontSize: 11, padding: '3px 8px', background: isSelected ? '#2563eb' : 'rgba(255,255,255,0.1)' }}
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            if (!live) selectTrack(item);
+                          }}
+                          disabled={live}
+                        >
+                          {isSelected ? 'Terpilih ✓' : 'Pilih'}
+                        </button>
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+            )}
+
+            {/* Currently Selected YouTube Track */}
+            <div style={{ background: 'rgba(34,197,94,0.08)', border: '1px solid rgba(34,197,94,0.25)', padding: '10px 14px', borderRadius: 8, fontSize: 13, color: '#86efac' }}>
+              <div style={{ fontWeight: 600, marginBottom: 2 }}>🎵 Lagu Siap Siaran:</div>
+              <div style={{ color: '#fff', fontSize: 13, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                {selectedTitle || youtubeUrl}
+              </div>
             </div>
           </div>
         )}

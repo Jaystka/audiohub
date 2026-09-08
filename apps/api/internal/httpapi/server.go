@@ -46,6 +46,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /api/sessions/{id}/stop", s.stopSession)
 	mux.HandleFunc("GET /api/youtube/stream", s.streamYouTube)
 	mux.HandleFunc("GET /api/youtube/info", s.infoYouTube)
+	mux.HandleFunc("GET /api/youtube/search", s.searchYouTube)
 	return cors(mux)
 }
 func cors(next http.Handler) http.Handler {
@@ -316,6 +317,79 @@ func (s *Server) infoYouTube(w http.ResponseWriter, r *http.Request) {
 		"duration":  duration,
 		"thumbnail": thumbnail,
 	})
+}
+
+type YouTubeSearchResult struct {
+	ID        string `json:"id"`
+	Title     string `json:"title"`
+	Duration  string `json:"duration"`
+	Thumbnail string `json:"thumbnail"`
+	Uploader  string `json:"uploader"`
+	URL       string `json:"url"`
+}
+
+func (s *Server) searchYouTube(w http.ResponseWriter, r *http.Request) {
+	q := strings.TrimSpace(r.URL.Query().Get("q"))
+	if q == "" {
+		jsonOut(w, 400, map[string]string{"error": "query parameter 'q' is required"})
+		return
+	}
+
+	ctx, cancel := context.WithTimeout(r.Context(), 15*time.Second)
+	defer cancel()
+
+	searchQuery := fmt.Sprintf("ytsearch8:%s", q)
+	cmd := exec.CommandContext(ctx, "yt-dlp",
+		"--print", "%(id)s\t%(title)s\t%(duration_string)s\t%(thumbnail)s\t%(uploader)s",
+		"--no-warnings",
+		"--no-playlist",
+		"--skip-download",
+		searchQuery,
+	)
+
+	out, err := cmd.Output()
+	if err != nil {
+		jsonOut(w, 500, map[string]string{"error": "search failed: " + err.Error()})
+		return
+	}
+
+	results := []YouTubeSearchResult{}
+	lines := strings.Split(strings.TrimSpace(string(out)), "\n")
+	for _, line := range lines {
+		if strings.TrimSpace(line) == "" {
+			continue
+		}
+		parts := strings.Split(line, "\t")
+		if len(parts) >= 2 {
+			id := strings.TrimSpace(parts[0])
+			title := strings.TrimSpace(parts[1])
+			duration := ""
+			thumbnail := ""
+			uploader := ""
+			if len(parts) > 2 {
+				duration = strings.TrimSpace(parts[2])
+			}
+			if len(parts) > 3 {
+				thumbnail = strings.TrimSpace(parts[3])
+			}
+			if len(parts) > 4 {
+				uploader = strings.TrimSpace(parts[4])
+			}
+			if thumbnail == "" && id != "" {
+				thumbnail = fmt.Sprintf("https://img.youtube.com/vi/%s/hqdefault.jpg", id)
+			}
+			results = append(results, YouTubeSearchResult{
+				ID:        id,
+				Title:     title,
+				Duration:  duration,
+				Thumbnail: thumbnail,
+				Uploader:  uploader,
+				URL:       fmt.Sprintf("https://www.youtube.com/watch?v=%s", id),
+			})
+		}
+	}
+
+	jsonOut(w, 200, results)
 }
 
 func ShutdownLiveKit(ctx context.Context) {
