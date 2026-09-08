@@ -38,8 +38,8 @@ services:
       LIVEKIT_API_KEY: devkey
       LIVEKIT_API_SECRET: devsecret
       LIVEKIT_URL: ws://livekit:7880
-      PUBLIC_LIVEKIT_URL: ws://localhost:7880
-      CORS_ORIGIN: http://localhost:3000
+      PUBLIC_LIVEKIT_URL: ${PUBLIC_LIVEKIT_URL:-ws://localhost:7880}
+      CORS_ORIGIN: "*"
     depends_on:
       postgres:
         condition: service_healthy
@@ -52,11 +52,12 @@ services:
     build:
       context: ./apps/web
       args:
-        NEXT_PUBLIC_API_URL: http://localhost:8080
-        NEXT_PUBLIC_LIVEKIT_URL: ws://localhost:7880
+        NEXT_PUBLIC_API_URL: ""
+        NEXT_PUBLIC_LIVEKIT_URL: ${PUBLIC_LIVEKIT_URL:-ws://localhost:7880}
     environment:
-      NEXT_PUBLIC_API_URL: http://localhost:8080
-      NEXT_PUBLIC_LIVEKIT_URL: ws://localhost:7880
+      INTERNAL_API_URL: http://api:8080
+      NEXT_PUBLIC_API_URL: ""
+      NEXT_PUBLIC_LIVEKIT_URL: ${PUBLIC_LIVEKIT_URL:-ws://localhost:7880}
     depends_on:
       - api
     ports:
