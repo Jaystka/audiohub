@@ -3,7 +3,7 @@ import { useEffect, useRef, useState } from 'react';
 import { Room, RoomEvent, LocalTrackPublication, Track } from 'livekit-client';
 import { api, Channel } from '@/lib/api';
 
-type AudioSourceType = 'mic' | 'youtube' | 'system' | 'file';
+type AudioSourceType = 'youtube' | 'mic' | 'system' | 'file';
 
 export default function Broadcast() {
   const [channels, setChannels] = useState<Channel[]>([]);
@@ -16,7 +16,7 @@ export default function Broadcast() {
   const [selectedDeviceId, setSelectedDeviceId] = useState<string>('');
   const [fileName, setFileName] = useState<string>('');
   const [youtubeUrl, setYoutubeUrl] = useState<string>('https://www.youtube.com/watch?v=jfKfPfyJRdk');
-  const [youtubeId, setYoutubeId] = useState<string>('jfKfPfyJRdk');
+  const [statusMessage, setStatusMessage] = useState<string>('');
 
   const roomRef = useRef<Room | null>(null);
   const sessionRef = useRef<string | null>(null);
@@ -48,44 +48,33 @@ export default function Broadcast() {
     };
   }, []);
 
-  function extractYouTubeId(url: string): string {
-    if (!url) return '';
-    const trimmed = url.trim();
-    if (/^[a-zA-Z0-9_-]{11}$/.test(trimmed)) {
-      return trimmed;
-    }
-    const match = trimmed.match(/(?:youtu\.be\/|youtube\.com\/(?:embed\/|v\/|watch\?v=|shorts\/|live\/))([\w-]{11})/);
-    return match ? match[1] : '';
-  }
-
-  function handleYoutubeUrlChange(val: string) {
-    setYoutubeUrl(val);
-    const id = extractYouTubeId(val);
-    if (id) {
-      setYoutubeId(id);
-    }
-  }
-
   function stopBroadcastCleanup() {
     if (raf.current) cancelAnimationFrame(raf.current);
     if (audioElementRef.current) {
       audioElementRef.current.pause();
       audioElementRef.current.src = '';
+      audioElementRef.current = null;
     }
     if (customMediaStreamRef.current) {
       customMediaStreamRef.current.getTracks().forEach(t => t.stop());
+      customMediaStreamRef.current = null;
     }
     if (audioContextRef.current && audioContextRef.current.state !== 'closed') {
       audioContextRef.current.close().catch(() => {});
+      audioContextRef.current = null;
     }
     roomRef.current?.disconnect();
     roomRef.current = null;
+    setStatusMessage('');
   }
 
   function setupAudioMeter(mediaStreamTrack: MediaStreamTrack) {
     try {
-      const ctx = new (window.AudioContext || (window as unknown as { webkitAudioContext: typeof AudioContext }).webkitAudioContext)();
-      audioContextRef.current = ctx;
+      if (!audioContextRef.current || audioContextRef.current.state === 'closed') {
+        const ctx = new (window.AudioContext || (window as unknown as { webkitAudioContext: typeof AudioContext }).webkitAudioContext)();
+        audioContextRef.current = ctx;
+      }
+      const ctx = audioContextRef.current;
       const src = ctx.createMediaStreamSource(new MediaStream([mediaStreamTrack]));
       audioSourceNodeRef.current = src;
       const analyser = ctx.createAnalyser();
@@ -113,34 +102,36 @@ export default function Broadcast() {
 
     try {
       let activeTrack: MediaStreamTrack | null = null;
+      setStatusMessage('Menghubungkan sumber audio...');
 
-      if (sourceType === 'system' || sourceType === 'youtube') {
-        // Capture system / tab audio
-        if (!navigator.mediaDevices?.getDisplayMedia) {
-          alert('Browser Anda tidak mendukung capture audio tab / sistem.');
+      if (sourceType === 'youtube') {
+        // Direct YouTube Audio Stream without screen/tab share popup!
+        if (!youtubeUrl.trim()) {
+          alert('Silakan masukkan link YouTube terlebih dahulu.');
           return;
         }
 
-        const displayStream = await navigator.mediaDevices.getDisplayMedia({
-          video: true,
-          audio: {
-            echoCancellation: false,
-            noiseSuppression: false,
-            autoGainControl: false,
-          },
-        });
+        setStatusMessage('Mengekstrak audio YouTube...');
+        const streamUrl = `/api/youtube/stream?url=${encodeURIComponent(youtubeUrl.trim())}`;
+        const audio = new Audio(streamUrl);
+        audio.crossOrigin = 'anonymous';
+        audio.autoplay = true;
+        audioElementRef.current = audio;
 
-        // Stop the video track as we only need audio
-        displayStream.getVideoTracks().forEach(t => t.stop());
-
-        const audioTrack = displayStream.getAudioTracks()[0];
-        if (!audioTrack) {
-          displayStream.getTracks().forEach(t => t.stop());
-          alert('Audio tab tidak dipilih! Pastikan Anda mencentang opsi "Also share tab audio" / "Share system audio" pada popup browser.');
-          return;
+        const ctx = new (window.AudioContext || (window as unknown as { webkitAudioContext: typeof AudioContext }).webkitAudioContext)();
+        if (ctx.state === 'suspended') {
+          await ctx.resume();
         }
+        audioContextRef.current = ctx;
 
-        customMediaStreamRef.current = displayStream;
+        const dest = ctx.createMediaStreamDestination();
+        const src = ctx.createMediaElementSource(audio);
+        src.connect(dest);
+        src.connect(ctx.destination); // dengarkan di speaker lokal juga
+
+        await audio.play();
+        const audioTrack = dest.stream.getAudioTracks()[0];
+        customMediaStreamRef.current = dest.stream;
         activeTrack = audioTrack;
       } else if (sourceType === 'file') {
         const file = fileInputRef.current?.files?.[0];
@@ -155,7 +146,11 @@ export default function Broadcast() {
         audioElementRef.current = audio;
 
         const ctx = new (window.AudioContext || (window as unknown as { webkitAudioContext: typeof AudioContext }).webkitAudioContext)();
+        if (ctx.state === 'suspended') {
+          await ctx.resume();
+        }
         audioContextRef.current = ctx;
+
         const dest = ctx.createMediaStreamDestination();
         const src = ctx.createMediaElementSource(audio);
         src.connect(dest);
@@ -165,8 +160,34 @@ export default function Broadcast() {
         const audioTrack = dest.stream.getAudioTracks()[0];
         customMediaStreamRef.current = dest.stream;
         activeTrack = audioTrack;
+      } else if (sourceType === 'system') {
+        if (!navigator.mediaDevices?.getDisplayMedia) {
+          alert('Browser Anda tidak mendukung capture audio tab / sistem.');
+          return;
+        }
+
+        const displayStream = await navigator.mediaDevices.getDisplayMedia({
+          video: true,
+          audio: {
+            echoCancellation: false,
+            noiseSuppression: false,
+            autoGainControl: false,
+          },
+        });
+
+        displayStream.getVideoTracks().forEach(t => t.stop());
+
+        const audioTrack = displayStream.getAudioTracks()[0];
+        if (!audioTrack) {
+          displayStream.getTracks().forEach(t => t.stop());
+          alert('Audio tab tidak dipilih! Pastikan Anda mencentang opsi "Also share tab audio" / "Share system audio" pada popup browser.');
+          return;
+        }
+
+        customMediaStreamRef.current = displayStream;
+        activeTrack = audioTrack;
       } else {
-        // Microphone with device selection
+        // Microphone
         const stream = await navigator.mediaDevices.getUserMedia({
           audio: selectedDeviceId ? { deviceId: { exact: selectedDeviceId } } : true,
         });
@@ -178,6 +199,8 @@ export default function Broadcast() {
         alert('Gagal mengaktifkan sumber audio.');
         return;
       }
+
+      setStatusMessage('Menghubungkan ke LiveKit Media Server...');
 
       // Connect to LiveKit Room
       const tk = await api<{ token: string; url: string }>('/api/livekit/token', {
@@ -219,6 +242,7 @@ export default function Broadcast() {
       });
       sessionRef.current = s.id;
       setLive(true);
+      setStatusMessage('Sedang Mengudara (Live)');
     } catch (err: unknown) {
       console.error('Error starting broadcast:', err);
       stopBroadcastCleanup();
@@ -245,7 +269,7 @@ export default function Broadcast() {
     <div className="studio">
       <div className="center">
         <div className="title">Broadcast Studio</div>
-        <div className="sub">Publish YouTube audio, microphone, or music files directly to a realtime channel.</div>
+        <div className="sub">Direct YouTube audio streaming, music player, and microphone broadcasting.</div>
       </div>
       <div className="card" style={{ marginTop: 20 }}>
         {/* Channel Selection */}
@@ -268,28 +292,25 @@ export default function Broadcast() {
             onChange={e => setSourceType(e.target.value as AudioSourceType)}
             disabled={live}
           >
-            <option value="youtube">▶️ YouTube Streamer (Built-in Player)</option>
-            <option value="system">💻 Computer / Tab Audio (Spotify, Other Tabs)</option>
+            <option value="youtube">▶️ Direct YouTube Streamer (Tanpa Share Tab - Rendah Latency)</option>
             <option value="file">🎵 Audio File (MP3 / WAV Player)</option>
-            <option value="mic">🎙️ Microphone / Audio Input</option>
+            <option value="system">💻 Computer / Tab Audio (Manual Screen Share)</option>
+            <option value="mic">🎙️ Microphone / Audio Input Device</option>
           </select>
         </div>
 
-        {/* YouTube Section */}
+        {/* Direct YouTube Section */}
         {sourceType === 'youtube' && (
           <div style={{ marginTop: 6, marginBottom: 18 }}>
             <div className="field">
-              <label>YouTube URL or Video ID</label>
-              <div style={{ display: 'flex', gap: 8 }}>
-                <input
-                  type="text"
-                  placeholder="https://www.youtube.com/watch?v=..."
-                  value={youtubeUrl}
-                  onChange={e => handleYoutubeUrlChange(e.target.value)}
-                  disabled={live}
-                  style={{ flex: 1 }}
-                />
-              </div>
+              <label>YouTube URL</label>
+              <input
+                type="text"
+                placeholder="https://www.youtube.com/watch?v=..."
+                value={youtubeUrl}
+                onChange={e => setYoutubeUrl(e.target.value)}
+                disabled={live}
+              />
             </div>
 
             {/* Quick Presets */}
@@ -298,7 +319,8 @@ export default function Broadcast() {
                 type="button"
                 className="btn"
                 style={{ fontSize: 12, padding: '4px 10px', background: 'rgba(255,255,255,0.08)' }}
-                onClick={() => handleYoutubeUrlChange('https://www.youtube.com/watch?v=jfKfPfyJRdk')}
+                onClick={() => setYoutubeUrl('https://www.youtube.com/watch?v=jfKfPfyJRdk')}
+                disabled={live}
               >
                 ☕ Lofi Girl Radio
               </button>
@@ -306,7 +328,8 @@ export default function Broadcast() {
                 type="button"
                 className="btn"
                 style={{ fontSize: 12, padding: '4px 10px', background: 'rgba(255,255,255,0.08)' }}
-                onClick={() => handleYoutubeUrlChange('https://www.youtube.com/watch?v=5qap5aO4i9A')}
+                onClick={() => setYoutubeUrl('https://www.youtube.com/watch?v=5qap5aO4i9A')}
+                disabled={live}
               >
                 🎧 Lofi Synthwave
               </button>
@@ -314,32 +337,15 @@ export default function Broadcast() {
                 type="button"
                 className="btn"
                 style={{ fontSize: 12, padding: '4px 10px', background: 'rgba(255,255,255,0.08)' }}
-                onClick={() => handleYoutubeUrlChange('https://www.youtube.com/watch?v=DWcJFNfaw9c')}
+                onClick={() => setYoutubeUrl('https://www.youtube.com/watch?v=DWcJFNfaw9c')}
+                disabled={live}
               >
                 🌿 Relaxing Acoustic
               </button>
             </div>
 
-            {/* Embedded Responsive YouTube Player */}
-            {youtubeId && (
-              <div style={{ position: 'relative', width: '100%', paddingTop: '56.25%', borderRadius: 10, overflow: 'hidden', background: '#000', marginTop: 10, boxShadow: '0 4px 20px rgba(0,0,0,0.4)' }}>
-                <iframe
-                  style={{ position: 'absolute', top: 0, left: 0, width: '100%', height: '100%', border: 'none' }}
-                  src={`https://www.youtube.com/embed/${youtubeId}?autoplay=1&enablejsapi=1`}
-                  title="YouTube video player"
-                  allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share"
-                  allowFullScreen
-                />
-              </div>
-            )}
-
-            <div style={{ background: 'rgba(59,130,246,0.1)', border: '1px solid rgba(59,130,246,0.25)', padding: '10px 14px', borderRadius: 8, fontSize: 13, color: '#93c5fd', marginTop: 12 }}>
-              💡 <strong>Petunjuk Siaran YouTube:</strong>
-              <ol style={{ margin: '4px 0 0 16px', padding: 0 }}>
-                <li>Putar video YouTube di player di atas.</li>
-                <li>Klik tombol <strong>Start broadcast</strong> di bawah.</li>
-                <li>Pada popup browser, pilih <strong>Tab ini (AudioHub)</strong> dan pastikan centang <strong>"Also share tab audio"</strong>.</li>
-              </ol>
+            <div style={{ background: 'rgba(34,197,94,0.1)', border: '1px solid rgba(34,197,94,0.25)', padding: '10px 14px', borderRadius: 8, fontSize: 13, color: '#86efac' }}>
+              ⚡ <strong>Direct Stream:</strong> Cukup masukkan URL YouTube di atas dan klik <strong>Start broadcast</strong>. Audio YouTube akan langsung diproses dan disiarkan dengan latensi sangat rendah tanpa popup share tab!
             </div>
           </div>
         )}
@@ -364,7 +370,7 @@ export default function Broadcast() {
 
         {sourceType === 'system' && (
           <div style={{ background: 'rgba(255,255,255,0.05)', padding: '10px 14px', borderRadius: 8, fontSize: 13, color: '#aaa', marginBottom: 16 }}>
-            💡 <strong>Tips:</strong> Saat popup browser muncul, pilih <strong>Tab</strong> (misal YouTube/Spotify) atau <strong>Entire Screen</strong>, dan pastikan centang opsi <strong>"Also share tab audio" / "Share system audio"</strong>.
+            💡 <strong>Tips:</strong> Saat popup browser muncul, pilih <strong>Tab</strong> atau <strong>Entire Screen</strong>, dan pastikan centang opsi <strong>"Also share tab audio"</strong>.
           </div>
         )}
 
@@ -390,7 +396,8 @@ export default function Broadcast() {
           <div className="sub">Audio level {level}%</div>
           <div className="sub">Listeners {listeners}</div>
         </div>
-        <div className="center" style={{ marginTop: 22 }}>
+        {statusMessage && <div className="center" style={{ fontSize: 13, color: live ? '#4ade80' : '#94a3b8', marginTop: 10 }}>{statusMessage}</div>}
+        <div className="center" style={{ marginTop: 18 }}>
           {!live ? (
             <button className="btn" onClick={start}>
               Start broadcast

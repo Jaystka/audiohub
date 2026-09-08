@@ -4,9 +4,11 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"log"
 	"net/http"
 	"os"
+	"os/exec"
 	"strings"
 	"time"
 
@@ -42,6 +44,8 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /api/sessions", s.listSessions)
 	mux.HandleFunc("POST /api/sessions/start", s.startSession)
 	mux.HandleFunc("POST /api/sessions/{id}/stop", s.stopSession)
+	mux.HandleFunc("GET /api/youtube/stream", s.streamYouTube)
+	mux.HandleFunc("GET /api/youtube/info", s.infoYouTube)
 	return cors(mux)
 }
 func cors(next http.Handler) http.Handler {
@@ -236,6 +240,82 @@ func (s *Server) stopSession(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	jsonOut(w, 200, map[string]bool{"ok": true})
+}
+
+func (s *Server) streamYouTube(w http.ResponseWriter, r *http.Request) {
+	urlParam := r.URL.Query().Get("url")
+	if urlParam == "" {
+		jsonOut(w, 400, map[string]string{"error": "url parameter is required"})
+		return
+	}
+
+	ctx, cancel := context.WithCancel(r.Context())
+	defer cancel()
+
+	cmd := exec.CommandContext(ctx, "yt-dlp",
+		"-f", "ba/b",
+		"-o", "-",
+		"--quiet",
+		"--no-warnings",
+		"--no-playlist",
+		urlParam,
+	)
+
+	stdout, err := cmd.StdoutPipe()
+	if err != nil {
+		jsonOut(w, 500, map[string]string{"error": "failed to create stream pipe: " + err.Error()})
+		return
+	}
+
+	if err := cmd.Start(); err != nil {
+		jsonOut(w, 500, map[string]string{"error": "failed to start stream: " + err.Error()})
+		return
+	}
+
+	w.Header().Set("Content-Type", "audio/webm")
+	w.Header().Set("Cache-Control", "no-cache, no-store")
+	w.WriteHeader(http.StatusOK)
+
+	_, _ = io.Copy(w, stdout)
+	_ = cmd.Wait()
+}
+
+func (s *Server) infoYouTube(w http.ResponseWriter, r *http.Request) {
+	urlParam := r.URL.Query().Get("url")
+	if urlParam == "" {
+		jsonOut(w, 400, map[string]string{"error": "url parameter is required"})
+		return
+	}
+
+	ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
+	defer cancel()
+
+	cmd := exec.CommandContext(ctx, "yt-dlp", "--print", "%(title)s\n%(duration)s\n%(thumbnail)s", "--no-warnings", "--no-playlist", urlParam)
+	out, err := cmd.Output()
+	if err != nil {
+		jsonOut(w, 500, map[string]string{"error": "failed to fetch video info"})
+		return
+	}
+
+	lines := strings.Split(strings.TrimSpace(string(out)), "\n")
+	title := ""
+	duration := ""
+	thumbnail := ""
+	if len(lines) > 0 {
+		title = lines[0]
+	}
+	if len(lines) > 1 {
+		duration = lines[1]
+	}
+	if len(lines) > 2 {
+		thumbnail = lines[2]
+	}
+
+	jsonOut(w, 200, map[string]string{
+		"title":     title,
+		"duration":  duration,
+		"thumbnail": thumbnail,
+	})
 }
 
 func ShutdownLiveKit(ctx context.Context) {
