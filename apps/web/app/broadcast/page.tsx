@@ -3,7 +3,7 @@ import { useEffect, useRef, useState } from 'react';
 import { Room, RoomEvent, LocalTrackPublication, Track } from 'livekit-client';
 import { api, Channel } from '@/lib/api';
 
-type AudioSourceType = 'mic' | 'system' | 'file';
+type AudioSourceType = 'mic' | 'youtube' | 'system' | 'file';
 
 export default function Broadcast() {
   const [channels, setChannels] = useState<Channel[]>([]);
@@ -11,10 +11,12 @@ export default function Broadcast() {
   const [live, setLive] = useState(false);
   const [level, setLevel] = useState(0);
   const [listeners, setListeners] = useState(0);
-  const [sourceType, setSourceType] = useState<AudioSourceType>('mic');
+  const [sourceType, setSourceType] = useState<AudioSourceType>('youtube');
   const [audioDevices, setAudioDevices] = useState<MediaDeviceInfo[]>([]);
   const [selectedDeviceId, setSelectedDeviceId] = useState<string>('');
   const [fileName, setFileName] = useState<string>('');
+  const [youtubeUrl, setYoutubeUrl] = useState<string>('https://www.youtube.com/watch?v=jfKfPfyJRdk');
+  const [youtubeId, setYoutubeId] = useState<string>('jfKfPfyJRdk');
 
   const roomRef = useRef<Room | null>(null);
   const sessionRef = useRef<string | null>(null);
@@ -45,6 +47,24 @@ export default function Broadcast() {
       stopBroadcastCleanup();
     };
   }, []);
+
+  function extractYouTubeId(url: string): string {
+    if (!url) return '';
+    const trimmed = url.trim();
+    if (/^[a-zA-Z0-9_-]{11}$/.test(trimmed)) {
+      return trimmed;
+    }
+    const match = trimmed.match(/(?:youtu\.be\/|youtube\.com\/(?:embed\/|v\/|watch\?v=|shorts\/|live\/))([\w-]{11})/);
+    return match ? match[1] : '';
+  }
+
+  function handleYoutubeUrlChange(val: string) {
+    setYoutubeUrl(val);
+    const id = extractYouTubeId(val);
+    if (id) {
+      setYoutubeId(id);
+    }
+  }
 
   function stopBroadcastCleanup() {
     if (raf.current) cancelAnimationFrame(raf.current);
@@ -94,10 +114,10 @@ export default function Broadcast() {
     try {
       let activeTrack: MediaStreamTrack | null = null;
 
-      if (sourceType === 'system') {
+      if (sourceType === 'system' || sourceType === 'youtube') {
         // Capture system / tab audio
         if (!navigator.mediaDevices?.getDisplayMedia) {
-          alert('Browser Anda tidak mendukung capture audio sistem / tab.');
+          alert('Browser Anda tidak mendukung capture audio tab / sistem.');
           return;
         }
 
@@ -116,7 +136,7 @@ export default function Broadcast() {
         const audioTrack = displayStream.getAudioTracks()[0];
         if (!audioTrack) {
           displayStream.getTracks().forEach(t => t.stop());
-          alert('Audio sistem tidak ditemukan! Pastikan Anda mencentang "Share tab audio" atau "Share system audio" pada popup browser.');
+          alert('Audio tab tidak dipilih! Pastikan Anda mencentang opsi "Also share tab audio" / "Share system audio" pada popup browser.');
           return;
         }
 
@@ -139,7 +159,7 @@ export default function Broadcast() {
         const dest = ctx.createMediaStreamDestination();
         const src = ctx.createMediaElementSource(audio);
         src.connect(dest);
-        src.connect(ctx.destination); // dengarkan di speaker lokal juga
+        src.connect(ctx.destination);
 
         await audio.play();
         const audioTrack = dest.stream.getAudioTracks()[0];
@@ -184,7 +204,7 @@ export default function Broadcast() {
       });
       customTrackPubRef.current = pub;
 
-      // Handle stream end event (e.g. user clicks Stop Sharing on browser bar)
+      // Handle stream end event
       activeTrack.onended = () => {
         stop();
       };
@@ -225,7 +245,7 @@ export default function Broadcast() {
     <div className="studio">
       <div className="center">
         <div className="title">Broadcast Studio</div>
-        <div className="sub">Publish your microphone, system audio, or music file to a realtime channel.</div>
+        <div className="sub">Publish YouTube audio, microphone, or music files directly to a realtime channel.</div>
       </div>
       <div className="card" style={{ marginTop: 20 }}>
         {/* Channel Selection */}
@@ -248,11 +268,81 @@ export default function Broadcast() {
             onChange={e => setSourceType(e.target.value as AudioSourceType)}
             disabled={live}
           >
-            <option value="mic">🎙️ Microphone / Audio Input</option>
-            <option value="system">💻 Computer / Tab Audio (YouTube, Spotify, System)</option>
+            <option value="youtube">▶️ YouTube Streamer (Built-in Player)</option>
+            <option value="system">💻 Computer / Tab Audio (Spotify, Other Tabs)</option>
             <option value="file">🎵 Audio File (MP3 / WAV Player)</option>
+            <option value="mic">🎙️ Microphone / Audio Input</option>
           </select>
         </div>
+
+        {/* YouTube Section */}
+        {sourceType === 'youtube' && (
+          <div style={{ marginTop: 6, marginBottom: 18 }}>
+            <div className="field">
+              <label>YouTube URL or Video ID</label>
+              <div style={{ display: 'flex', gap: 8 }}>
+                <input
+                  type="text"
+                  placeholder="https://www.youtube.com/watch?v=..."
+                  value={youtubeUrl}
+                  onChange={e => handleYoutubeUrlChange(e.target.value)}
+                  disabled={live}
+                  style={{ flex: 1 }}
+                />
+              </div>
+            </div>
+
+            {/* Quick Presets */}
+            <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', marginTop: 6, marginBottom: 12 }}>
+              <button
+                type="button"
+                className="btn"
+                style={{ fontSize: 12, padding: '4px 10px', background: 'rgba(255,255,255,0.08)' }}
+                onClick={() => handleYoutubeUrlChange('https://www.youtube.com/watch?v=jfKfPfyJRdk')}
+              >
+                ☕ Lofi Girl Radio
+              </button>
+              <button
+                type="button"
+                className="btn"
+                style={{ fontSize: 12, padding: '4px 10px', background: 'rgba(255,255,255,0.08)' }}
+                onClick={() => handleYoutubeUrlChange('https://www.youtube.com/watch?v=5qap5aO4i9A')}
+              >
+                🎧 Lofi Synthwave
+              </button>
+              <button
+                type="button"
+                className="btn"
+                style={{ fontSize: 12, padding: '4px 10px', background: 'rgba(255,255,255,0.08)' }}
+                onClick={() => handleYoutubeUrlChange('https://www.youtube.com/watch?v=DWcJFNfaw9c')}
+              >
+                🌿 Relaxing Acoustic
+              </button>
+            </div>
+
+            {/* Embedded Responsive YouTube Player */}
+            {youtubeId && (
+              <div style={{ position: 'relative', width: '100%', paddingTop: '56.25%', borderRadius: 10, overflow: 'hidden', background: '#000', marginTop: 10, boxShadow: '0 4px 20px rgba(0,0,0,0.4)' }}>
+                <iframe
+                  style={{ position: 'absolute', top: 0, left: 0, width: '100%', height: '100%', border: 'none' }}
+                  src={`https://www.youtube.com/embed/${youtubeId}?autoplay=1&enablejsapi=1`}
+                  title="YouTube video player"
+                  allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share"
+                  allowFullScreen
+                />
+              </div>
+            )}
+
+            <div style={{ background: 'rgba(59,130,246,0.1)', border: '1px solid rgba(59,130,246,0.25)', padding: '10px 14px', borderRadius: 8, fontSize: 13, color: '#93c5fd', marginTop: 12 }}>
+              💡 <strong>Petunjuk Siaran YouTube:</strong>
+              <ol style={{ margin: '4px 0 0 16px', padding: 0 }}>
+                <li>Putar video YouTube di player di atas.</li>
+                <li>Klik tombol <strong>Start broadcast</strong> di bawah.</li>
+                <li>Pada popup browser, pilih <strong>Tab ini (AudioHub)</strong> dan pastikan centang <strong>"Also share tab audio"</strong>.</li>
+              </ol>
+            </div>
+          </div>
+        )}
 
         {/* Dynamic Source Sub-options */}
         {sourceType === 'mic' && audioDevices.length > 0 && (
@@ -292,7 +382,7 @@ export default function Broadcast() {
           </div>
         )}
 
-        <div className="liveOrb">{live ? 'LIVE' : (sourceType === 'file' ? 'FILE' : sourceType === 'system' ? 'PC' : 'MIC')}</div>
+        <div className="liveOrb">{live ? 'LIVE' : (sourceType === 'youtube' ? 'YT' : sourceType === 'file' ? 'FILE' : sourceType === 'system' ? 'PC' : 'MIC')}</div>
         <div className="meter">
           <div style={{ width: `${level}%` }} />
         </div>
